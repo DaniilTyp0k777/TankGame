@@ -397,8 +397,18 @@ def health_bars(player_health, enemy_health):
     else:
         enemy_health_color = red
 
-    pygame.draw.rect(gameDisplay, player_health_color, (680, 25, player_health, 25))
-    pygame.draw.rect(gameDisplay, enemy_health_color, (20, 25, enemy_health, 25))
+    role = int(net_state.get("role", 1))
+    local_on_right = (not net_state.get("enabled")) or role == 1
+
+    if local_on_right:
+        player_x = int(display_width - 20 - player_health)
+        enemy_x = 20
+    else:
+        player_x = 20
+        enemy_x = int(display_width - 20 - enemy_health)
+
+    pygame.draw.rect(gameDisplay, player_health_color, (player_x, 25, player_health, 25))
+    pygame.draw.rect(gameDisplay, enemy_health_color, (enemy_x, 25, enemy_health, 25))
 
 def game_over():
     game_over = True
@@ -724,6 +734,12 @@ def gameLoop():
     remotePowerChange = 0
     remoteTurPos = 8
 
+    if net_state.get("enabled"):
+        role = int(net_state.get("role", 1))
+        if role == 2:
+            mainTankX, enemyTankX = enemyTankX, mainTankX
+            mainTankY, enemyTankY = enemyTankY, mainTankY
+
     while not gameExit:
 
         if gameOver == True:
@@ -782,46 +798,34 @@ def gameLoop():
                     print("[Бій] Постріл")
                     if net_state.get("enabled"):
                         _net_send({"type": "fire", "tur": currentTurPos, "power": fire_power})
-                    else:
-                        damage = fireShell(gun, mainTankX, mainTankY, currentTurPos, fire_power, xlocation, barrier_width,
-                                           randomHeight, enemyTankX, enemyTankY)
+
+                        direction = 1 if mainTankX < enemyTankX else -1
+                        if direction == 1:
+                            local_gun = enemy_tank(mainTankX, mainTankY, currentTurPos)
+                        else:
+                            local_gun = tank(mainTankX, mainTankY, currentTurPos)
+
+                        damage = _fire_shell_dir(
+                            local_gun,
+                            mainTankX,
+                            mainTankY,
+                            currentTurPos,
+                            fire_power,
+                            direction,
+                            xlocation,
+                            barrier_width,
+                            randomHeight,
+                            enemyTankX,
+                            enemyTankY,
+                        )
                         enemy_health -= damage
-
-                        possibleMovement = ['f', 'r']
-                        moveIndex = random.randrange(0, 2)
-
-                        for x in range(random.randrange(0, 10)):
-
-                            if display_width * 0.3 > enemyTankX > display_width * 0.03:
-                                if possibleMovement[moveIndex] == "f":
-                                    enemyTankX += 5
-                                elif possibleMovement[moveIndex] == "r":
-                                    enemyTankX -= 5
-
-                                gameDisplay.fill(black)
-                                health_bars(player_health, enemy_health)
-                                gun = tank(mainTankX, mainTankY, currentTurPos)
-                                enemy_gun = enemy_tank(enemyTankX, enemyTankY, 8)
-                                fire_power += power_change
-
-                                power(fire_power)
-
-                                barrier(xlocation, randomHeight, barrier_width)
-                                gameDisplay.fill(green,
-                                                 rect=[0, display_height - ground_height, display_width, ground_height])
-                                pygame.display.update()
-
-                                clock.tick(FPS)
-
-                        damage = e_fireShell(enemy_gun, enemyTankX, enemyTankY, 8, 50, xlocation, barrier_width,
-                                             randomHeight, mainTankX, mainTankY)
-                        player_health -= damage
 
                 elif event.key == pygame.K_a:
                     power_change = -1
                     print("[Потужність] -")
                     if net_state.get("enabled"):
                         _net_send({"type": "power", "v": -1})
+
                 elif event.key == pygame.K_d:
                     power_change = 1
                     print("[Потужність] +")
@@ -857,15 +861,27 @@ def gameLoop():
                     rt = int(msg.get("tur", 8))
                     rp = int(msg.get("power", 50))
                     remoteTurPos = rt
-                    role = int(net_state.get("role", 1))
-                    if role == 1:
+
+                    direction = 1 if enemyTankX < mainTankX else -1
+                    if direction == 1:
                         remote_gun = enemy_tank(enemyTankX, enemyTankY, remoteTurPos)
-                        damage = _fire_shell_dir(remote_gun, enemyTankX, enemyTankY, remoteTurPos, rp, 1, xlocation, barrier_width, randomHeight, mainTankX, mainTankY)
-                        player_health -= damage
                     else:
                         remote_gun = tank(enemyTankX, enemyTankY, remoteTurPos)
-                        damage = _fire_shell_dir(remote_gun, enemyTankX, enemyTankY, remoteTurPos, rp, -1, xlocation, barrier_width, randomHeight, mainTankX, mainTankY)
-                        player_health -= damage
+
+                    damage = _fire_shell_dir(
+                        remote_gun,
+                        enemyTankX,
+                        enemyTankY,
+                        remoteTurPos,
+                        rp,
+                        direction,
+                        xlocation,
+                        barrier_width,
+                        randomHeight,
+                        mainTankX,
+                        mainTankY,
+                    )
+                    player_health -= damage
                 elif t == "opponent_left":
                     print("[Мережа] Суперник вийшов")
                     _net_disconnect()
@@ -879,22 +895,35 @@ def gameLoop():
         elif currentTurPos < 0:
             currentTurPos = 0
 
-        if mainTankX - (tankWidth / 2) < xlocation + barrier_width:
-            mainTankX += 5
+        if mainTankX - (tankWidth / 2) < xlocation + barrier_width and mainTankX + (tankWidth / 2) > xlocation:
+            if mainTankX < xlocation:
+                mainTankX = xlocation - (tankWidth / 2)
+            else:
+                mainTankX = xlocation + barrier_width + (tankWidth / 2)
 
-        if net_state.get("enabled"):
-            role = int(net_state.get("role", 1))
+        if mainTankX + (tankWidth / 2) > display_width:
+            mainTankX = display_width - (tankWidth / 2)
+        elif mainTankX - (tankWidth / 2) < 0:
+            mainTankX = (tankWidth / 2)
 
-            if role == 2:
-                mainTankX, enemyTankX = enemyTankX, mainTankX
-                mainTankY, enemyTankY = enemyTankY, mainTankY
+        enemyTankX += remoteMove
 
-            enemyTankX += remoteMove
-            remoteTurPos += remoteChangeTur
-            if remoteTurPos > 8:
-                remoteTurPos = 8
-            elif remoteTurPos < 0:
-                remoteTurPos = 0
+        if enemyTankX - (tankWidth / 2) < xlocation + barrier_width and enemyTankX + (tankWidth / 2) > xlocation:
+            if enemyTankX < xlocation:
+                enemyTankX = xlocation - (tankWidth / 2)
+            else:
+                enemyTankX = xlocation + barrier_width + (tankWidth / 2)
+
+        if enemyTankX + (tankWidth / 2) > display_width:
+            enemyTankX = display_width - (tankWidth / 2)
+        elif enemyTankX - (tankWidth / 2) < 0:
+            enemyTankX = (tankWidth / 2)
+
+        remoteTurPos += remoteChangeTur
+        if remoteTurPos > 8:
+            remoteTurPos = 8
+        elif remoteTurPos < 0:
+            remoteTurPos = 0
 
         gameDisplay.fill(black)
         health_bars(player_health, enemy_health)
