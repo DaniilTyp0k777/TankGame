@@ -1,0 +1,10 @@
+{
+  "name": "Player",
+  "coins": 25,
+  "mmr": 20,
+  "mmr_best": 20,
+  "items": {
+    "x2": 0,
+    "freeze": 0
+  }
+}
